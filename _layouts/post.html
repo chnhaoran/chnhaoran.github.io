@@ -34,3 +34,7 @@ layout: default
     {% endif %} 
   </div>
 </div>
+
+{%- if site.disqus.shortname -%}
+  {%- include disqus.html -%}
+{%- endif -%}

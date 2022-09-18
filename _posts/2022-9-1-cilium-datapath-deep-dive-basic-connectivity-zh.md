@@ -96,7 +96,7 @@ spec:
 ```
 
 <div style="text-align: center">
-<img src="/images/2022-9-1-cilium-datapath-deep-dive-basic-connectivity/datapath.png"/>
+<img src="https://raw.githubusercontent.com/chnhaoran/chnhaoran.github.io/main/images/2022-9-1-cilium-datapath-deep-dive-basic-connectivity/datapath.png"/>
 </div>
 
 
@@ -112,7 +112,7 @@ spec:
 
 ## 同node上pod to pod
 <div style="text-align: center">
-<img src="/images/2022-9-1-cilium-datapath-deep-dive-basic-connectivity/pod-pod-same-node-1.png"/>
+<img src="https://raw.githubusercontent.com/chnhaoran/chnhaoran.github.io/main/images/2022-9-1-cilium-datapath-deep-dive-basic-connectivity/pod-pod-same-node-1.png"/>
 </div>
 
 
@@ -226,7 +226,7 @@ int handle_to_container(struct __ctx_buff *ctx)
 
 ## 跨node的pod to pod
 <div style="text-align: center">
-<img src="/images/2022-9-1-cilium-datapath-deep-dive-basic-connectivity/Diagram-node-pod.drawio.png"/>
+<img src="https://raw.githubusercontent.com/chnhaoran/chnhaoran.github.io/main/images/2022-9-1-cilium-datapath-deep-dive-basic-connectivity/Diagram-node-pod.drawio.png"/>
 </div>
 
 不同node上pod到pod需要经过`cilium_vxlan`封包以overlay的方式发送到对端。以`pod1-1`到`pod2-1`为例，<mark>发送阶段</mark>的处理方式在前半段和同节点类似，不同的是在进入`handle_ipv4_from_lxc`后会在bpf map `cilium_ipcache`中查询。查询到目的IP对应的tunnelpoint为远端node，进入`encap_and_redirect_lxc`流程，在这里会对从pod里发出的原始packet做encap，encap流程会填上tunnel key，包含remote IP，VNI ID等信息。encap完成后，redirect到`cilium_vxlan`，剩下的由kernel vxlan进行处理，并经由协议栈发送到对端node。
@@ -297,7 +297,7 @@ int tail_handle_ipv4(struct __ctx_buff *ctx)
 ## node to pod
 
 <div style="text-align: center">
-<img src="/images/2022-9-1-cilium-datapath-deep-dive-basic-connectivity/Diagram-node-pod.drawio.png"/>
+<img src="https://raw.githubusercontent.com/chnhaoran/chnhaoran.github.io/main/images/2022-9-1-cilium-datapath-deep-dive-basic-connectivity/Diagram-node-pod.drawio.png"/>
 </div>
 
 我们以跨节点的node to pod作为典型例子。在<mark>发送端</mark>，根据路由表，`cilium_host`是cluster内所有podCIDR的网关，node to pod的过程可以看为是`cilium_host`到对端pod的过程。
@@ -395,7 +395,7 @@ handle_xgress(struct __ctx_buff *ctx)
 ## pod to external
 
 <div style="text-align: center">
-<img src="/images/2022-9-1-cilium-datapath-deep-dive-basic-connectivity/Diagram-pod-external.png"/>
+<img src="https://raw.githubusercontent.com/chnhaoran/chnhaoran.github.io/main/images/2022-9-1-cilium-datapath-deep-dive-basic-connectivity/Diagram-pod-external.png"/>
 </div>
 
 pod to external（cluster外的某个地址）的packet在<mark>发送</mark>时经过lxc1挂载的`tc ingress`，`ipv4_l3`做简单l3处理后，送往协议栈。再经由kube-proxy做Masquerade从主机发出。

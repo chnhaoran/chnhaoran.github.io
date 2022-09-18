@@ -2,6 +2,7 @@
 layout: post
 title: Things to do before we die!
 data: 2022-08-30
+comments: false
 categories: 
 - Life
 ---

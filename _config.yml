@@ -1,7 +1,7 @@
 title: kinstone's Blog
 description: kinstone's Blog
 
-url: https://kinstone.github.io
+url: https://chnhaoran.github.io
 paginate_path: "blog/page:num/"
 permalink: blog/:title/
 
@@ -22,7 +22,8 @@ navigation:
    url: /categories
  - title: About
    url: /about
-
+ - title: Donate
+   url: /donate
 
 social:
    github: chnhaoran
@@ -37,6 +38,9 @@ defaults:
       comments: false
 
 google_analytics: "G-LZTRJQTMCY"
+
+disqus:
+    shortname: kinstones-blog
 
 # development configurations
 host: 0.0.0.0
