@@ -1,6 +1,6 @@
 ---
 layout: post
-title: Cilium数据平面深度解析 1 - 基础连通性
+title: Cilium Datapath Deep Dive 1 - Basic Connectivity
 data: 2023-02-26
 lastupdate: 2023-02-26
 categories: 
