@@ -14,17 +14,17 @@ categories:
 {:toc}
 
 # Overview
-With the rapid development of bpf/ebpf technology, Cilium is regarded as the most promising network solution in the Kubernetes ecosystem. Leveraging the flexible, efficient, and functionally/data-separate features of ebpf, Cilium is also officially supported in several public clouds.
+With the rapid development of BPF/eBPF technology, Cilium is regarded as the most promising network solution in the Kubernetes ecosystem. Leveraging the flexible, efficient, and functionally/data-separate features of BPF, Cilium is officially supported by several public clouds.
 
 Most traditional Kubernetes CNI plugins are based on Linux kernel networking solutions, such as Flannel based on tunneling (with backend options like vxlan and user-space UDP processes), and Calico based on routing (L2 networks or BGP). When using these CNI plugins, we can easily determine the actual path of packets and how they are forwarded using kernel-provided toolsets such as iproute2/tcpdump. However, when using Cilium, it is often difficult to capture packets and obtain any statistical information, leaving one perplexed.
 
 This article attempts to summarize Cilium's packet processing logic through analysis of existing tools and source code.
 
 # Backgroud
-## Important bpf hook points
-- XDP: the earliest processing point for data packets received by the driver of a network device, even before skb created. XDP has three modes: native, offload, and generic. When the network card does not support offload, it is best to use the native mode supported by a high version of the kernel. When the native mode is not supported, the generic mode can be used as a simulation. XDP is suitable for DDoS protection, firewall, and other functions.
+## Important BPF hook points
+- XDP: the earliest processing point for data packets received by the driver of a network device, even before the skb struct created. XDP has three modes: native, offload, and generic. When the network card does not support offload, it is best to use the native mode supported by a high version of the kernel. When the native mode is not supported, the generic mode can be used as a simulation. XDP is suitable for DDoS protection, firewall, and other functions.
 
-Take igb driver source code as example，we can see the processing point of XDP。
+Take linux igb driver source code as example, we can see where XDP works.
   
 ```c++
 // linux source code: igb_main.c
@@ -42,16 +42,16 @@ static int igb_clean_rx_irq(struct igb_q_vector *q_vector, const int budget)
         /* At larger PAGE_SIZE, frame_sz depend on len size */
         xdp.frame_sz = igb_rx_frame_truesize(rx_ring, size);
 #endif
-        // XDP program runs here
+        // <=== XDP program runs here ===>
         skb = igb_run_xdp(adapter, rx_ring, &xdp);
     }
 ...
 }
 ```
 
-In this article, we use the default cilium configuration (disabled policies). No bpf programs were attached to XDP. We will introduce policies in later articles.
+In this article, we use the default Cilium configuration (disabled policies). No BPF programs were attached to XDP. We will introduce policies in later articles.
 
-- TC: the initial processing point of the networking protocol stack. It is heavily used in Cilium and closely related to basic connectivity. We will focus on TC in particular.
+- TC: the initial processing point of the network stack. It is heavily used in Cilium and is closely related to basic connectivity. We will focus on TC in particular.
 
 
 ```c++
@@ -61,13 +61,13 @@ __netif_receive_skb_core
     | do_xdp_generic // handle generic xdp
     | sch_handle_ingress // tc ingress
         | tcf_classify
-            | __tcf_classify // ebpf program is working here
+            | __tcf_classify // bpf program is working here
 
 ```
 
 # Cilium Datapath
 
-In this part, We analyze how Cilium datapath is working。To make the cluster network independent of underlay network，tunnel mode is used。
+In this part, We analyze how Cilium datapath is working. To make the cluster network independent of the underlay network, tunnel mode is used.
 
 Experimental setup：
 
@@ -80,7 +80,7 @@ Experimental setup：
 > Others: default configuration (kube-proxy-replacement: disabled; tunnel: vxlan)
 
 
-After deployment, each node has a veth pair `cilium_host`/`cilium_net` and a vxlan device `cilium_vxlan`. A veth `lxcXXXX` on node corresponds to `eth0` inside each pod. Cilium uses default `cluster-scope IPAM mode` to assigns a  `PodCIDR` for each node, and the pods on that node will get an IP within that CIDR. The `cilium_host` on each node has an IP that serves as the gateway for all Pods on that node.
+After deployment, each node has a veth pair `cilium_host`/`cilium_net` and a vxlan device `cilium_vxlan`. A veth device `lxcXXXX` on node corresponds to `eth0` inside each pod. Cilium uses default `cluster-scope IPAM mode` to assign a  `PodCIDR` for each node, and the pods on that node will get an IP within that CIDR. The `cilium_host` on each node has an IP that serves as the gateway for all Pods on that node.
 
 `podCIDR` is recorded in resource CiliumNode.
 
@@ -101,9 +101,9 @@ spec:
 </div>
 
 
-Below diagrams descibe how Cilium's datapath implemented the basic connectiviy.
+The below diagrams describe how Cilium's datapath implemented the basic connectiviy.
 
-ebpf prgram hook points:
+BPF prgram hook points:
 - `lxc` (pod eth0's peer veth):TC ingress/TC egress
 - `cilium_host` (veth netdev): TC ingress/egress
 - `cilium_net` (cilium_host's peer veth): TC ingress
@@ -125,7 +125,7 @@ default via 10.0.1.197 dev eth0
 10.0.1.197 dev eth0 scope link
 ```
 
-Let's first analyze the processing of ARP. pod1-1 sends an ARP request to the gateway, with the destination IP address of 10.0.1.197 (`cilium_host`). Note that the source MAC address of the response received here is not from the `cilium_host`, but from `lxc1`. Cilium uses a technique similar to arp_proxy to achieve layer 3 forwarding. The reason why it is similar to arp_proxy is that it is not actually enabled in the kernel, but implemented by utilizing the eBPF program attached to `lxc1`.
+Let's first analyze the processing of ARP. pod1-1 sends an ARP request to the gateway, with the destination IP address of 10.0.1.197 (`cilium_host`). Note that the source MAC address of the response received here is not from the `cilium_host`, but from `lxc1`. Cilium uses a technique similar to arp_proxy to achieve layer 3 forwardings. The reason why it is similar to arp_proxy is that arp_proxy is not enabled in the kernel, but the effects are done by the BPF program attached to `lxc1`.
 
 ``` c++
 // bpf_lxc.c
@@ -162,7 +162,7 @@ arp_respond(struct __ctx_buff *ctx, union macaddr *smac, __be32 sip,
 }
 
 ```
-Let's look at regular IPv4 forwarding in Cilium. The ctx (i.e., skb) goes through a series of tail_calls and is eventually handled by handle_ipv4_from_lxc.
+Let's look at regular IPv4 forwarding in Cilium. The ctx (i.e., skb) goes through a series of tail calls and is eventually handled by `handle_ipv4_from_lxc`.
 
 
 Call stack:
@@ -185,7 +185,7 @@ handle_xgress(struct __ctx_buff *ctx)
                         | redirect_ep(...) // redirect to dst iface
 ```
 
-After processing of CT and others，`lookup_ip4_endpoint` looks up bpf map `cilium_lxc` and gets the endpoint information corresponding to its IP。
+After processing of CT and others, `lookup_ip4_endpoint` looks up BPF map `cilium_lxc` and gets the endpoint information corresponding to its IP.
 
 ```c++
 root@cilium-worker2:/home/cilium# cilium map get cilium_lxc
@@ -197,11 +197,12 @@ Key            Value                                                            
 10.0.1.79:0    id=436   flags=0x0000 ifindex=16  mac=32:ED:0B:F8:18:E9 nodemac=C2:8B:75:D9:5F:EC   sync
 ```
 
-在`ipv4_local_delivery`中，首先对IP报文做l3处理（包括ttl-1和mac地址更新）。tail_call到目的`lxc`的bpf program做NAT和policy enforcement(部署中暂无policy)，最后通过`redirect_ep`传给目的endpoint。
+In the `ipv4_local_delivery` function, the IP packet is first processed at layer 3, which includes decrementing the TTL and updating the MAC address. By tail call, a packet is sent to the destination `lxc` to perform NAT and policy enforcement (there is currently no policy in our deployment). Finally, the packet is passed to the destination endpoint via `redirect_ep`.
 
-需要注意的是`redirect_ep`会根据宏定义决定是直接发送给对端的`lxc`还是与之相连的pod内的`eth0`，在我们的部署中发现，内核版本会影响实际的转发逻辑。`5.10`内核下会直接调用`ctx_redirect_peer`发送到最终的`pod1-2`的`eth0`。
+It should be noted that the behavior of `redirect_ep` depends on a macro definition that determines whether the packet is sent directly to the destination `lxc` or `eth0` interface within the pod. The kernel version affects the actual forwarding logic. With kernel version 5.10, the function directly calls `ctx_redirect_peer` to send the packet to the final destination pod1-2's `eth0`.
 
-<mark>接收端</mark>的bpf program挂在`lxc`的`egress`方向。接收端同样调用`ipv4_policy`做redirect。但在我们的部署环境中，egress不起什么作用。
+The BPF program on the <mark>RX side</mark> is attached to the `egress` direction of the `lxc`. The receiving side also calls `ipv4_policy` to perform the redirect. However, our deployment only focuses on connectivity.
+
 
 ```c++
 // bpf_lxc.c
@@ -224,12 +225,14 @@ int handle_to_container(struct __ctx_buff *ctx)
     | redirect_ep(ctx, ifindex, from_host) // redirect to dst iface
 ```
 
-## 跨node的pod to pod
+## pod to pod on different nodes
 <div style="text-align: center">
 <img src="https://raw.githubusercontent.com/chnhaoran/chnhaoran.github.io/main/images/2022-9-1-cilium-datapath-deep-dive-basic-connectivity/Diagram-node-pod.drawio.png"/>
 </div>
 
-不同node上pod到pod需要经过`cilium_vxlan`封包以overlay的方式发送到对端。以`pod1-1`到`pod2-1`为例，<mark>发送阶段</mark>的处理方式在前半段和同节点类似，不同的是在进入`handle_ipv4_from_lxc`后会在bpf map `cilium_ipcache`中查询。查询到目的IP对应的tunnelpoint为远端node，进入`encap_and_redirect_lxc`流程，在这里会对从pod里发出的原始packet做encap，encap流程会填上tunnel key，包含remote IP，VNI ID等信息。encap完成后，redirect到`cilium_vxlan`，剩下的由kernel vxlan进行处理，并经由协议栈发送到对端node。
+
+`cilium_vxlan` encapsulates packets from one pod to vxlan and sends to the other pod on a remote node. Taking the example of communication from pod1-1 to pod2-1, the <mark>TX phase</mark> follows a part of a similar process as within the same node. However, upon entering `handle_ipv4_from_lxc`, the BPF map `cilium_ipcache` is queried for the destination IP's corresponding tunnel point. If the tunnel point is on a remote node, the process enters `encap_and_redirect_lxc`, where the original packet from the pod is encapsulated. The encapsulation process populates the tunnel key, remote IP, VNI ID, and other information. Then the packet is redirected to `cilium_vxlan` and the remaining processing is handled by the kernel vxlan and sent to the destination node via the stack.
+
 
 ```
 root@cilium-worker:/home/cilium# cilium map get cilium_ipcache
@@ -242,7 +245,7 @@ Key             Value                                                   State   
 10.0.1.116/32   identity=9049 encryptkey=0 tunnelendpoint=0.0.0.0       sync
 ```
 
-Call stack如下：
+Call stack:
 ``` c++
 // bpf_lxc.c
 handle_xgress(struct __ctx_buff *ctx)
@@ -257,8 +260,7 @@ handle_xgress(struct __ctx_buff *ctx)
                 | ctx_redirect(ctx, ENCAP_IFINDEX, 0) // redirect to vxlan netdev
 ```
 
-
-在<mark>接收端</mark>，`cilium_vxlan`从物理网络收到数据，经过vxlan设备的decap之后,进入`tc ingress ("from-overlay")`被bpf program处理。
+In <mark>RX side</mark>, `cilium_vxlan` receives packets from the wire. After decapsulation by vxlan device, inner packets enter `tc ingress ("from-overlay")` and are processed by the attached BPF program.
 
 ```c++
 // bpf_overlay.c
@@ -281,10 +283,11 @@ int tail_handle_ipv4(struct __ctx_buff *ctx)
   ...
 }
 ```
+Within `handle_ipv4`, `ipcache_lookup4` is called to look up the local identity in the BPF map `cilium_ipcache`. The function then calls `ipv4_local_delivery` to forward packets to local interface. Since the call stack of `ipv4_local_delivery` is the same as that described in the first section, it will not be elaborated on further here.
 
-在`handle_ipv4`中调用`ipcache_lookup4`，在bpf map `cilium_ipcache`里找到本地的identity，调用`ipv4_local_delivery`转发到本地的interface。由于`ipv4_local_delivery`和第一部分中的call stack一致，在这里不再赘述。
 
-接收端call stack
+
+RX call stack:
 ``` c++
 //  bpf_overlay.c
 | tail_handle_ipv4(struct __ctx_buff *ctx)
@@ -300,7 +303,8 @@ int tail_handle_ipv4(struct __ctx_buff *ctx)
 <img src="https://raw.githubusercontent.com/chnhaoran/chnhaoran.github.io/main/images/2022-9-1-cilium-datapath-deep-dive-basic-connectivity/Diagram-node-pod.drawio.png"/>
 </div>
 
-我们以跨节点的node to pod作为典型例子。在<mark>发送端</mark>，根据路由表，`cilium_host`是cluster内所有podCIDR的网关，node to pod的过程可以看为是`cilium_host`到对端pod的过程。
+Take "node to a remote pod" as an example. For <mark>TX side</mark>, in a node we can see `cilium_host` is the next hop of all podCIDR. node to pod is actually `cilium_host` to remote pod.
+
 
 ```c++
 root@cilium-worker2:/home/cilium# ip r
@@ -312,7 +316,7 @@ default via 172.18.0.1 dev eth0
 172.18.0.0/16 dev eth0 proto kernel scope link src 172.18.0.3
 ```
 
-整体流程和pod-pod通信类似，call stack如下。
+The whole process is similar to pod-to-pod. Call stack:
 
 ```c++
 // bpf_host.c
@@ -324,7 +328,7 @@ handle_netdev(struct __ctx_buff *ctx, const bool from_host)
           | encap_and_redirect_with_nodeid(...) // encap and send to remote tunnel endpoint
 ```
 
-<mark>接收端</mark>也和pod-pod类似，通过`cilium_vxlan`后，查询bpf map `cilium_lxc`判断是node上的`cilium_host`，发送过去。
+Host <mark>RX</mark> is also similar to pod-to-pod. After received by `cilium_vxlan`, we look up BPF map `cilium_lxc` and check if endpoint is local `cilium_host`. If yes, redirect to it.
 
 ```c++
 //  bpf_overlay.c
@@ -344,7 +348,8 @@ handle_netdev(struct __ctx_buff *ctx, const bool from_host)
 <img src="/images/2022-9-1-cilium-datapath-deep-dive-basic-connectivity/Diagram-pod-service.drawio.png"/>
 </div>
 
-pod to service的整体流程和pod-to-pod类似。在<mark>发送端</mark>，不同之处在进行`__tail_handle_ipv4`处理时，查看bpf map `cilium_lb4_services_v2`是否有对应的service出现，如果有，则进入DNAT流程：做CT处理，并查找bpf map `cilium_lb4_backends_v2`确定对应的后端，将clusterIP换成实际的后端IP。
+The overall process for communication from pod to service is similar to that of pod-to-pod. In the <mark>TX phase</mark>, the difference lies in the handling of `__tail_handle_ipv4`, where the BPF map `cilium_lb4_services_v2` is checked for the corresponding service. If a match is found, the process enters the DNAT phase. In this phase, packets pass through CT, then we query the BPF map `cilium_lb4_backends_v2` to determine which backend packet should go. Once a backend real server is selected, the clusterIP is replaced with the actual IP of the backend.
+
 
 ```shell
 root@cilium-worker:/home/cilium# cilium map get cilium_lb4_services_v2
@@ -363,7 +368,7 @@ Key   Value                   State   Error
 3     ANY://10.0.1.9:9153     sync
 ```
 
-DNAT完成后，后续的转发流程与pod-to-pod相同。
+After DNAT, the subsequent forwarding processes are similar to pod-to-pod.
 ``` c++
 // bpf_lxc.c
 handle_xgress(struct __ctx_buff *ctx)
@@ -380,14 +385,14 @@ handle_xgress(struct __ctx_buff *ctx)
                 | ctx_redirect(ctx, ENCAP_IFINDEX, 0) // redirect to vxlan netdev
 ```
 
-收到reply时，<mark>接收端</mark>做reverse NAT，完成src IP到clusterIP的转换，再将packet转到lxc。
+On receiving the response, the RX side performs reverse NAT, which replaces source IP with clusterIP, then redirects to destination interface.
 
 ```c++
 // Call stack
 | tail_ipv4_to_endpoint
   | ipv4_policy
     | lb4_rev_nat // reverse nat
-      | map_lookup_elem(&LB4_REVERSE_NAT_MAP, ...) // lookup reverset nat map
+      | map_lookup_elem(&LB4_REVERSE_NAT_MAP, ...) // lookup reversed nat map
       | __lb4_rev_nat // replace source IP
     | redirect_ep(ctx, ifindex, from_host) // redirect to dest iface
 ```
@@ -398,7 +403,8 @@ handle_xgress(struct __ctx_buff *ctx)
 <img src="https://raw.githubusercontent.com/chnhaoran/chnhaoran.github.io/main/images/2022-9-1-cilium-datapath-deep-dive-basic-connectivity/Diagram-pod-external.png"/>
 </div>
 
-pod to external（cluster外的某个地址）的packet在<mark>发送</mark>时经过lxc1挂载的`tc ingress`，`ipv4_l3`做简单l3处理后，送往协议栈。再经由kube-proxy做Masquerade从主机发出。
+Packets from pod to external (outside cluster) are processed by `tc ingress` at `lxc`. `ipv4_l3` performs regular layer 3 logic. Then they are sent to the kernel stack. After masquerade by kube-proxy, packets are sent to the wire.
+
 
 ```c++
 handle_xgress(struct __ctx_buff *ctx)
@@ -412,12 +418,16 @@ handle_xgress(struct __ctx_buff *ctx)
             | pass_to_stack: ipv4_l3(...)
             | return to stack
 ```
-<mark>接收</mark>response时，主机侧根据出方向Masquerade的情况做地址转换，转换后根据主机路由表发给`cilium_host`。上面挂载的bpf program判断这是外部进来的packet，redirect给pod1-1对应的`lxc1`。
 
-# 总结
-本文通过实际场景和Cilium代码的对照分析，明确了Cilium datapath处理数据包的过程。里面涉及到一定的bpf和内核背景知识，我们将在后续的文章中展开说来。
+At <mark>RX</mark> side, when receiving the response, the host conducts reverse address translation in the context of the masquerade. According to the host routing table, packets are sent to `cilium_host`. The attached BPF program checks the incoming packets are from external and then redirects to the corresponding `lxc1` of pod1-1
+
+# Conclusion
+This article provides a deep dive into how Cilium datapath handles network connectivity through source code. It needs a certain level of background knowledge of BPF and the kernel. We will explore more in future articles.
+
 
 # Reference
 [1. BPF and XDP Reference Guide](https://docs.cilium.io/en/latest/bpf/)
 
 [2. Life of a Packet in Cilium: Discovering the Pod-to-Service Traffic Path and BPF Processing Logics](https://arthurchiao.art/blog/cilium-life-of-a-packet-pod-to-service/)
+
+[3. veth(4) — Linux manual page](https://man7.org/linux/man-pages/man4/veth.4.html)
