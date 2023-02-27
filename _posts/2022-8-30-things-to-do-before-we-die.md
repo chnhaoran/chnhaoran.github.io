@@ -10,7 +10,7 @@ categories:
 
 # Travel
 - Europe
-- Changsha
+- ~~Changsha~~
 - Chengdu
 - Yellowstone National Park
 - Antelope Valley
@@ -18,6 +18,6 @@ categories:
 # Experience
 - ~~Swim~~
 - Skating
-- Try Shaobing & Satang
+- ~~Try Shaobing & Satang~~
 - Get married
 - Fly drones in more than 10 cities
