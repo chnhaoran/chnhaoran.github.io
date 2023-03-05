@@ -1,46 +1,43 @@
 ---
 layout: post
-title: Tcpdump Deep Dive - How Tcpdump works in the kernel
-data: 2023-03-05
-lastupdate: 2023-03-05
+title: tcpdump在内核中是如何工作的
+data: 2022-10-30
 categories: 
 - Linux
 - Network
-- Cilium
+- Chinese
 ---
 
 * TOC
 {:toc}
 
-# Background
-While using Cilium, we have observed that in some cases, despite successful pinging, tcpdump fails to capture any packets. This article aims to look into the mechanics of tcpdump in the kernel.
+# 背景
+在使用Cilium的过程中，我们发现很多情况下看到流量已经打通，但使用tcpdump抓包却看不到任何包经过的痕迹。本文尝试对tcpdump在kernel中的工作过程一探究竟。
 
-# Network processing by the kernel
-Before diving deep, we need to understand how the kernel processes network traffic.
+# 内核对网络数据的处理
+在分析tcpdump的工作原理前，需要了解kernel对网络数据的处理过程。
 
 <div style="text-align: center">
 <img src="https://raw.githubusercontent.com/chnhaoran/chnhaoran.github.io/main/images/2022-10-30-tcpdump/overview.png"/>
 </div>
 
-When a network interface card (NIC) receives data frames from the wire
-- It utilizes direct memory access (DMA) to write the data frame into a pre-allocated ring buffer.
-- This triggers a hard interrupt to notify the CPU that there is network data to receive.
-- Upon receiving the interrupt, the CPU triggers a soft interrupt
-- It calls the driver's registered poll function to poll the data frames from the ring buffer.
-- The data frames enter the network subsystem, passing through sub-systems such as tc, netfilter, and route for L2/L3/L4 protocols.
-- Finally, the data frames are sent to the corresponding user space registered sockets.
+总体来说，当物理网卡(NIC)收到物理线路上的数据帧时
+- NIC以DMA方式把数据帧写入预先分配的ring buffer中
+- 触发硬中断，通知CPU有网络数据需要接收
+- CPU收到后，触发软中断 softirq
+- 调用driver注册的poll函数从ring buffer中poll出数据帧
+- 进入网络子系统处理，经过tc/netfilter/route等子系统，处理相关的L2/L3/L4协议
+- 发给对应的用户态注册的socket
 
+## 初始化
+内核需要先完成初始化工作来支撑之后的数据包处理，包括
+- 驱动初始化
+- 软中断线程初始化
+- 协议栈处理函数初始化
 
-## Initialization
-The kernel needs to complete the initialization to support the subsequent packet processing, including:
-- Driver initialization
-- Soft interrupt thread initialization
-- Initialization of network stack processing functions
+我们将在下一篇文章中详细解读驱动初始化和软中断线程初始化。这篇文章中，协议栈处理函数初始化是我们关注的重点。
 
-This article only focuses on the initialization of network stack processing functions.
-
-Take IP as an example, the initialization processes of IPv4 and IPv6 are as follow.
-
+以IP为例，IPv4和IPv6的初始化如下
 ```c++
 // af_inet.c
 static int __init inet_init(void)
@@ -72,7 +69,7 @@ static int __init ipv6_packet_init(void)
 }
 ```
 
-In function `dev_add_pack`, protocols and corresponding handlers are added to ptype_all (ETH_P_ALL) or ptype_base (other protocols).
+在`dev_add_pack`中，协议和对应handler分别被加入到ptype_all(ETH_P_ALL)或ptype_base（其他协议）。
 
 ```c++
 // dev.c
@@ -98,8 +95,8 @@ static inline struct list_head *ptype_head(const struct packet_type *pt)
 #define ETH_P_ALL	0x0003		/* Every packet (be careful!!!) */
 ```
 
-## RX side processing
-At the RX side, `__netif_receive_skb_core` first iterates `ptype_all` sniffers and delivers skb to its handler. Then according to the packet type (e.g., `ETH_P_IP`), it delivers skb to the handlers registered to `ptype_base`.
+## 接收端处理
+在接收侧，`__netif_receive_skb_core`先判断`ptype_all`中是否有sniffer注册了`ETH_P_ALL`类型的协议，如果有，则送到对应的handler处理。再根据数据包的类型，将skb送给注册协议的handler，比如`ETH_P_IP`等。
 
 ```c++
 //dev.c
@@ -131,9 +128,7 @@ static int __netif_receive_skb_core(struct sk_buff **pskb, bool pfmemalloc,
 
 }
 ```
-
-
-Checking [libpcap's](https://github.com/the-tcpdump-group/libpcap) source code, we find it uses `ETH_P_ALL` as the protocol.
+查看libpcap的代码，可以看到pcap使用的正是`ETH_P_ALL`协议，并注册了AF_PACKET类型的socket。
 
 ```c++
 //libpcap-linux.c
@@ -158,10 +153,7 @@ static int iface_bind(int fd, int ifindex, char *ebuf, int protocol)
 }
 ```
 
-Back to the Linux kernel, we provide the protocol and handler while creating a socket. That's why `tcpdump` can dump the packets from the NIC.
-
-Note that `XDP` hook point is ahead of `ETH_P_ALL` processing. That's why in some cases we miss packet capture in Cilium. Data is redirected at the first entry point.
-
+在kernel中，注册socket会对应的增加一个proto的处理，对应的skb会发送给该协议相关的所有socket。这也就是为什么tcpdump可以在用户态收到网卡抓到包的原因。
 
 ```c++
 // af_packet.c
@@ -186,10 +178,9 @@ static void register_prot_hook(struct sock *sk)
 	__register_prot_hook(sk);
 }
 ```
-## TX side processing
-After the network stack, the last step is `__dev_queue_xmit`. `dev_queue_xmit_nit` iterates every `ETH_P_ALL` related sockets and delivers to the handler.
 
-
+## 发送端处理
+接收端的方式也是一样的。协议栈处理完后，`__dev_queue_xmit`做最后的发送，先经过tc处理，再经过`ETH_P_ALL`协议的处理，发送给对应的处理函数。
 ```c++
 // dev.c
 static int __dev_queue_xmit(struct sk_buff *skb, struct net_device *sb_dev)
@@ -220,10 +211,5 @@ void dev_queue_xmit_nit(struct sk_buff *skb, struct net_device *dev)
 }
 ```
 
-# Conclusion
-We dive deep into source code to better understand how tcpdump works. For short takeaways, 
-
-- RX side: XDP -> `Tcpdump` -> TC -> network stack
-- TX side: network stack -> TC -> `Tcpdump`
 
 
