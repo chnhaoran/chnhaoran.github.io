@@ -34,7 +34,14 @@ That process is slow. It is fragmented. And sometimes, it takes much longer than
 
 So I built **where-is-my-packet**.
 
-https://github.com/chnhaoran/where-is-my-packet
+<div class="project-link-card">
+  <a class="project-link-card__link" href="https://github.com/chnhaoran/where-is-my-packet" target="_blank" rel="noopener noreferrer">
+    <span class="project-link-card__eyebrow">Open source project</span>
+    <span class="project-link-card__title">where-is-my-packet</span>
+    <span class="project-link-card__description">A Linux networking debugging tool that helps explain how a host handles a packet and where to look next.</span>
+    <span class="project-link-card__cta">View project on GitHub</span>
+  </a>
+</div>
 
 ## The Problem I Wanted to Solve
 
